@@ -1,0 +1,9 @@
+# Electron / build files
+dist/
+win-unpacked/
+*.exe
+*.zip
+
+# Agent builds
+File_Saasens_backend/public/agent/
+saas_ems_eng/dist/
