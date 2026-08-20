@@ -29,36 +29,63 @@ async function main() {
   // 2. Seed Default plans
   const plans = [
     {
-      name: 'Free Trial',
+      name: '7 Days Free Trial',
       price: 0,
-      duration: 'Monthly',
+      duration: '7 Days',
       employeeLimit: 5,
-      screenshotLimit: 5, // GB
+      screenshotLimit: 5,
       activityTracking: true,
       productivityReports: false,
       attendanceModule: true,
+      videoRecording: false,
       status: 'ACTIVE'
     },
     {
-      name: 'Professional',
-      price: 49,
+      name: 'Starter',
+      price: 999,
       duration: 'Monthly',
-      employeeLimit: 50,
-      screenshotLimit: 50, // GB
+      employeeLimit: 15,
+      screenshotLimit: 10,
       activityTracking: true,
       productivityReports: true,
       attendanceModule: true,
+      videoRecording: false,
       status: 'ACTIVE'
     },
     {
-      name: 'Enterprise',
-      price: 199,
+      name: 'Growth',
+      price: 1299,
       duration: 'Monthly',
+      employeeLimit: 25,
+      screenshotLimit: 25,
+      activityTracking: true,
+      productivityReports: true,
+      attendanceModule: true,
+      videoRecording: false,
+      status: 'ACTIVE'
+    },
+    {
+      name: 'Pro',
+      price: 1499,
+      duration: 'Monthly',
+      employeeLimit: 40,
+      screenshotLimit: 50,
+      activityTracking: true,
+      productivityReports: true,
+      attendanceModule: true,
+      videoRecording: true,
+      status: 'ACTIVE'
+    },
+    {
+      name: 'Custom Plan',
+      price: 0,
+      duration: 'Custom',
       employeeLimit: 9999,
-      screenshotLimit: 1000, // GB
+      screenshotLimit: 1000,
       activityTracking: true,
       productivityReports: true,
       attendanceModule: true,
+      videoRecording: true,
       status: 'ACTIVE'
     }
   ];
@@ -73,7 +100,11 @@ async function main() {
       plan = await prisma.saasPlan.create({ data: planData });
       console.log(`Plan '${planData.name}' created.`);
     } else {
-      console.log(`Plan '${planData.name}' already exists.`);
+      plan = await prisma.saasPlan.update({
+        where: { id: plan.id },
+        data: planData
+      });
+      console.log(`Plan '${planData.name}' updated.`);
     }
     seededPlans.push(plan);
   }

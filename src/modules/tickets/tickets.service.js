@@ -1,8 +1,25 @@
 const prisma = require('../../config/db');
+const { uploadImageBuffer } = require('../../utils/imageStorage');
+const { sendMail } = require('../../utils/email.service');
 
-const createTicket = async (user, data) => {
+const createTicket = async (user, data, file) => {
   const { title, category, priority, message } = data;
   const ticketNumber = `TKT-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
+
+  let imageUrl = null;
+  if (file) {
+    try {
+      const uploadResult = await uploadImageBuffer(file.buffer, {
+        format: 'webp',
+        quality: 80,
+        folder: 'insightful/tickets',
+        fileNamePrefix: 'ticket'
+      });
+      imageUrl = uploadResult.imageUrl;
+    } catch (err) {
+      console.error('Error uploading ticket image:', err.message);
+    }
+  }
   
   let dbUser = null;
   if (user.userId || user.id) {
@@ -34,10 +51,11 @@ const createTicket = async (user, data) => {
     sender: 'admin',
     name: adminName,
     text: message,
+    imageUrl: imageUrl || null,
     timestamp: new Date().toISOString()
   }] : [];
 
-  return await prisma.supportTicket.create({
+  const newTicket = await prisma.supportTicket.create({
     data: {
       ticketNumber,
       title: title || 'Support Request',
@@ -50,6 +68,46 @@ const createTicket = async (user, data) => {
       messages
     }
   });
+
+  // ── Email Notifications via support@kiaantechnology.com ─────────────────────
+  const supportEmail = process.env.SUPPORT_EMAIL || 'support@kiaantechnology.com';
+
+  const userSubject = `[Support Ticket #${ticketNumber}] Ticket Received: ${title || 'Support Request'}`;
+  const userHtml = `
+    <div style="font-family: Arial, sans-serif; padding: 20px; color: #1e293b;">
+      <h2 style="color: #2563eb;">Support Ticket Confirmation</h2>
+      <p>Hello <strong>${adminName}</strong>,</p>
+      <p>Your support ticket has been successfully raised. Our support team is reviewing your request.</p>
+      <table style="border-collapse: collapse; width: 100%; max-width: 500px; margin: 15px 0;">
+        <tr><td style="padding: 8px; font-weight: bold;">Ticket #:</td><td style="padding: 8px;">${ticketNumber}</td></tr>
+        <tr><td style="padding: 8px; font-weight: bold;">Category:</td><td style="padding: 8px;">${category || 'Technical'}</td></tr>
+        <tr><td style="padding: 8px; font-weight: bold;">Priority:</td><td style="padding: 8px;">${priority || 'Medium'}</td></tr>
+        <tr><td style="padding: 8px; font-weight: bold;">Status:</td><td style="padding: 8px; color: #16a34a; font-weight: bold;">OPEN</td></tr>
+      </table>
+    </div>
+  `;
+
+  const supportAlertSubject = `[New Support Ticket] #${ticketNumber} — ${companyName} (${priority || 'Medium'})`;
+  const supportAlertHtml = `
+    <div style="font-family: Arial, sans-serif; padding: 20px; color: #1e293b;">
+      <h2 style="color: #dc2626;">New Support Ticket Raised</h2>
+      <p>A new support ticket has been submitted by <strong>${adminName}</strong> (${companyName}).</p>
+      <table style="border-collapse: collapse; width: 100%; max-width: 500px; margin: 15px 0;">
+        <tr><td style="padding: 8px; font-weight: bold;">Ticket #:</td><td style="padding: 8px;">${ticketNumber}</td></tr>
+        <tr><td style="padding: 8px; font-weight: bold;">Admin Email:</td><td style="padding: 8px;">${adminEmail}</td></tr>
+        <tr><td style="padding: 8px; font-weight: bold;">Category:</td><td style="padding: 8px;">${category || 'Technical'}</td></tr>
+        <tr><td style="padding: 8px; font-weight: bold;">Priority:</td><td style="padding: 8px;">${priority || 'Medium'}</td></tr>
+        <tr><td style="padding: 8px; font-weight: bold;">Message:</td><td style="padding: 8px;">${message || 'N/A'}</td></tr>
+      </table>
+    </div>
+  `;
+
+  Promise.all([
+    sendMail({ to: adminEmail, subject: userSubject, html: userHtml }),
+    sendMail({ to: supportEmail, subject: supportAlertSubject, html: supportAlertHtml })
+  ]).catch(err => console.error('[SupportTicket] Email notification error:', err.message));
+
+  return newTicket;
 };
 
 const getTickets = async (user) => {
@@ -109,10 +167,25 @@ const getTicketById = async (id) => {
   return ticket;
 };
 
-const replyToTicket = async (id, user, data) => {
+const replyToTicket = async (id, user, data, file) => {
   const { text } = data;
   const ticket = await prisma.supportTicket.findUnique({ where: { id } });
   if (!ticket) throw new Error('Ticket not found');
+
+  let imageUrl = null;
+  if (file) {
+    try {
+      const uploadResult = await uploadImageBuffer(file.buffer, {
+        format: 'webp',
+        quality: 80,
+        folder: 'insightful/tickets',
+        fileNamePrefix: 'reply'
+      });
+      imageUrl = uploadResult.imageUrl;
+    } catch (err) {
+      console.error('Error uploading reply image:', err.message);
+    }
+  }
 
   let dbUser = null;
   if (user.userId || user.id) {
@@ -130,16 +203,35 @@ const replyToTicket = async (id, user, data) => {
     sender,
     name,
     text,
+    imageUrl: imageUrl || null,
     timestamp: new Date().toISOString()
   });
 
-  return await prisma.supportTicket.update({
+  const updatedTicket = await prisma.supportTicket.update({
     where: { id },
     data: {
       messages,
       status: isSuperAdmin ? 'REPLIED' : 'OPEN'
     }
   });
+
+  // ── Send Email Reply Notification ───────────────────────────────────────────
+  const supportEmail = process.env.SUPPORT_EMAIL || 'support@kiaantechnology.com';
+  const recipientEmail = isSuperAdmin ? ticket.adminEmail : supportEmail;
+  const replySubject = `[Support Ticket #${ticket.ticketNumber}] New Reply from ${isSuperAdmin ? 'Support Team' : name}`;
+  const replyHtml = `
+    <div style="font-family: Arial, sans-serif; padding: 20px; color: #1e293b;">
+      <h3 style="color: #2563eb;">Update on Ticket #${ticket.ticketNumber}</h3>
+      <p><strong>${name}</strong> (${isSuperAdmin ? 'Support Team' : 'Admin'}) added a reply:</p>
+      <blockquote style="border-left: 3px solid #2563eb; padding-left: 12px; margin: 15px 0; color: #475569; background: #f8fafc; padding-top: 8px; padding-bottom: 8px;">
+        ${text || 'Attachment uploaded'}
+      </blockquote>
+    </div>
+  `;
+
+  sendMail({ to: recipientEmail, subject: replySubject, html: replyHtml }).catch(err => console.error('[SupportTicket] Reply email error:', err.message));
+
+  return updatedTicket;
 };
 
 const deleteTicket = async (id, user) => {

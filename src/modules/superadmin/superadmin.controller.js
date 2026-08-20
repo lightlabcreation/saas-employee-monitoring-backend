@@ -68,6 +68,16 @@ const toggleAdmin = async (req, res) => {
   }
 };
 
+const deleteAdmin = async (req, res) => {
+  try {
+    await superAdminService.deleteAdmin(req.params.id);
+    return successResponse(res, null, 'Admin deleted successfully');
+  } catch (error) {
+    console.error('Error deleting admin:', error);
+    return errorResponse(res, error.message || 'Failed to delete admin', 400);
+  }
+};
+
 // 3. Plans
 const getPlans = async (req, res) => {
   try {
@@ -154,7 +164,7 @@ const getTicket = async (req, res) => {
 
 const replyTicket = async (req, res) => {
   try {
-    const ticket = await superAdminService.replyToTicket(req.params.id, req.body);
+    const ticket = await superAdminService.replyToTicket(req.params.id, req.body, req.file);
     return successResponse(res, ticket, 'Reply sent successfully');
   } catch (error) {
     console.error('Error replying to ticket:', error);
@@ -200,6 +210,7 @@ module.exports = {
   createAdmin,
   updateAdmin,
   toggleAdmin,
+  deleteAdmin,
   getPlans,
   createPlan,
   updatePlan,

@@ -17,6 +17,7 @@ router.get('/admins', superAdminController.getAdmins);
 router.post('/admins', superAdminController.createAdmin);
 router.put('/admins/:id', superAdminController.updateAdmin);
 router.post('/admins/:id/toggle', superAdminController.toggleAdmin);
+router.delete('/admins/:id', superAdminController.deleteAdmin);
 
 // 3. Plans Routes
 router.get('/plans', superAdminController.getPlans);
@@ -31,9 +32,12 @@ router.get('/settings', superAdminController.getSettings);
 router.put('/settings', superAdminController.updateSettings);
 
 // 6. Support Tickets Routes
+const multer = require('multer');
+const upload = multer({ storage: multer.memoryStorage() });
+
 router.get('/tickets', superAdminController.getTickets);
 router.get('/tickets/:id', superAdminController.getTicket);
-router.post('/tickets/:id/reply', superAdminController.replyTicket);
+router.post('/tickets/:id/reply', upload.single('image'), superAdminController.replyTicket);
 router.put('/tickets/:id/status', superAdminController.updateTicket);
 router.delete('/tickets/:id', superAdminController.deleteTicket);
 router.delete('/tickets/:id/messages/:messageIndex', superAdminController.deleteMessage);

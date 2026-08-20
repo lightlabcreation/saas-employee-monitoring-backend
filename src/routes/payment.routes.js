@@ -6,7 +6,7 @@ const Razorpay = require('razorpay');
 const prisma = require('../config/db');
 const { generateToken } = require('../utils/jwt');
 const { successResponse, errorResponse } = require('../utils/response');
-const { sendMail } = require('../utils/email.service');
+const authMiddleware = require('../middlewares/auth.middleware');
 
 // Initialize Razorpay client with keys
 const razorpay = new Razorpay({
@@ -16,14 +16,125 @@ const razorpay = new Razorpay({
 
 // Helper: Get Price based on Plan Name
 const getPriceByPlan = (planName) => {
+    if (!planName) return 999;
     const name = planName.toLowerCase();
-    if (name.includes('free') || name.includes('trial')) return 0;
-    if (name.includes('starter 1') || name.includes('1rs') || name.includes('1 rupee')) return 1;
-    if (name.includes('599') || name.includes('starter')) return 599;
-    if (name.includes('799') || name.includes('standard')) return 799;
-    if (name.includes('1299') || name.includes('pro')) return 1299;
-    return 599; // Default fallback
+    if (name.includes('free') || name.includes('trial') || name.includes('0')) return 0;
+    if (name.includes('999') || name.includes('starter')) return 999;
+    if (name.includes('1299') || name.includes('growth')) return 1299;
+    if (name.includes('1499') || name.includes('pro')) return 1499;
+    if (name.includes('custom')) return 0;
+    return 999; // Default fallback
 };
+
+const LANDING_FEATURED_PLANS = ['7 Days Free Trial', 'Starter', 'Growth', 'Pro', 'Custom Plan'];
+const PLAN_DISPLAY_ORDER = {
+    '7 days free trial': 1,
+    'starter': 2,
+    'growth': 3,
+    'pro': 4,
+    'custom plan': 5,
+    'custom': 5
+};
+
+const filterAndSortLandingPlans = (plansList, currentPlan = null) => {
+    const filtered = plansList.filter(p => {
+        const matchesLanding = LANDING_FEATURED_PLANS.some(fn => p.name.toLowerCase() === fn.toLowerCase());
+        const isCurrent = currentPlan && p.id === currentPlan.id;
+        return matchesLanding || isCurrent;
+    });
+
+    return filtered.sort((a, b) => {
+        const orderA = PLAN_DISPLAY_ORDER[a.name.toLowerCase()] || 99;
+        const orderB = PLAN_DISPLAY_ORDER[b.name.toLowerCase()] || 99;
+        return orderA - orderB;
+    });
+};
+
+/**
+ * GET /api/payments/plans
+ * Get all available active plans matching landing page
+ */
+router.get('/plans', async (req, res) => {
+    try {
+        const rawPlans = await prisma.saasPlan.findMany({
+            where: { status: 'ACTIVE' }
+        });
+        const plans = filterAndSortLandingPlans(rawPlans);
+        return successResponse(res, plans, 'Active plans retrieved successfully');
+    } catch (err) {
+        console.error('Error fetching plans:', err);
+        return errorResponse(res, err.message || 'Failed to fetch plans', 500);
+    }
+});
+
+/**
+ * GET /api/payments/my-subscription
+ * Get current organization subscription & payment history
+ */
+router.get('/my-subscription', authMiddleware, async (req, res) => {
+    try {
+        let organizationId = req.user.organizationId;
+        
+        if (!organizationId && req.user.employeeId) {
+            const emp = await prisma.employee.findUnique({
+                where: { id: req.user.employeeId },
+                select: { organizationId: true }
+            });
+            if (emp) organizationId = emp.organizationId;
+        }
+
+        if (!organizationId) {
+            const userWithEmp = await prisma.user.findUnique({
+                where: { id: req.user.userId },
+                include: { employee: true }
+            });
+            if (userWithEmp?.employee?.organizationId) {
+                organizationId = userWithEmp.employee.organizationId;
+            }
+        }
+
+        if (!organizationId) {
+            return errorResponse(res, 'Organization not found for current user', 404);
+        }
+
+        const subscription = await prisma.saasSubscription.findUnique({
+            where: { organizationId }
+        });
+
+        let plan = null;
+        if (subscription?.planId) {
+            plan = await prisma.saasPlan.findUnique({
+                where: { id: subscription.planId }
+            });
+        }
+
+        const payments = await prisma.saasPayment.findMany({
+            where: { organizationId },
+            orderBy: { paymentDate: 'desc' }
+        });
+
+        const employeeCount = await prisma.employee.count({
+            where: { organizationId, role: 'EMPLOYEE' }
+        });
+
+        const rawPlans = await prisma.saasPlan.findMany({
+            where: { status: 'ACTIVE' }
+        });
+
+        const allPlans = filterAndSortLandingPlans(rawPlans, plan);
+
+        return successResponse(res, {
+            subscription,
+            plan,
+            payments,
+            employeeCount,
+            allPlans
+        }, 'Subscription details retrieved successfully');
+    } catch (err) {
+        console.error('Error fetching my subscription:', err);
+        return errorResponse(res, err.message || 'Failed to fetch subscription', 500);
+    }
+});
 
 /**
  * 1. Create Razorpay Order
@@ -58,6 +169,111 @@ router.post('/create-order', async (req, res) => {
     } catch (err) {
         console.error('Error creating Razorpay order:', err);
         return errorResponse(res, err.message || 'Failed to create order', 500);
+    }
+});
+
+/**
+ * POST /api/payments/verify-upgrade
+ * Verify Razorpay payment and upgrade existing Admin organization subscription
+ */
+router.post('/verify-upgrade', authMiddleware, async (req, res) => {
+    try {
+        const { planName, razorpay_payment_id, razorpay_order_id, razorpay_signature } = req.body;
+        if (!planName) {
+            return errorResponse(res, 'Plan name is required', 400);
+        }
+
+        let organizationId = req.user.organizationId;
+        if (!organizationId && req.user.employeeId) {
+            const emp = await prisma.employee.findUnique({
+                where: { id: req.user.employeeId },
+                select: { organizationId: true }
+            });
+            if (emp) organizationId = emp.organizationId;
+        }
+
+        if (!organizationId) {
+            const userWithEmp = await prisma.user.findUnique({
+                where: { id: req.user.userId },
+                include: { employee: true }
+            });
+            if (userWithEmp?.employee?.organizationId) {
+                organizationId = userWithEmp.employee.organizationId;
+            }
+        }
+
+        if (!organizationId) {
+            return errorResponse(res, 'Organization not found for current user', 404);
+        }
+
+        const price = getPriceByPlan(planName);
+
+        // Verification step if paid plan
+        if (price > 0 && razorpay_payment_id) {
+            if (!razorpay_order_id || !razorpay_signature) {
+                return errorResponse(res, 'Payment verification details missing', 400);
+            }
+            const generatedSignature = crypto
+                .createHmac('sha256', 'CaKT2baCx1GxiPs8LX7cE1Bu')
+                .update(razorpay_order_id + "|" + razorpay_payment_id)
+                .digest('hex');
+
+            if (generatedSignature !== razorpay_signature) {
+                return errorResponse(res, 'Payment verification failed! Invalid signature.', 400);
+            }
+        }
+
+        // Find plan from DB
+        let dbPlan = await prisma.saasPlan.findFirst({
+            where: { name: { equals: planName, mode: 'insensitive' } }
+        });
+        if (!dbPlan) {
+            dbPlan = await prisma.saasPlan.findFirst({
+                where: { status: 'ACTIVE' }
+            });
+        }
+
+        const startDate = new Date();
+        const expiryDate = new Date();
+        expiryDate.setDate(expiryDate.getDate() + (dbPlan?.duration?.toLowerCase()?.includes('7') ? 7 : 30));
+
+        // Update Subscription
+        const updatedSub = await prisma.saasSubscription.upsert({
+            where: { organizationId },
+            update: {
+                planId: dbPlan.id,
+                status: 'ACTIVE',
+                startDate,
+                expiryDate
+            },
+            create: {
+                organizationId,
+                planId: dbPlan.id,
+                status: 'ACTIVE',
+                startDate,
+                expiryDate
+            }
+        });
+
+        // Record Payment invoice
+        await prisma.saasPayment.create({
+            data: {
+                organizationId,
+                adminId: req.user.userId || 'admin',
+                planId: dbPlan.id,
+                amount: price,
+                paymentMethod: price === 0 ? 'Free Plan' : 'Razorpay',
+                invoiceId: `INV-${Date.now()}`,
+                paymentDate: new Date(),
+                expiryDate,
+                status: 'PAID'
+            }
+        });
+
+        return successResponse(res, { subscription: updatedSub, plan: dbPlan }, 'Subscription upgraded successfully', 200);
+    } catch (err) {
+        console.error('Error verifying subscription upgrade:', err);
+        return errorResponse(res, err.message || 'Failed to upgrade subscription', 500);
     }
 });
 
@@ -115,7 +331,7 @@ router.post('/verify-and-register', async (req, res) => {
 
         // Setup dates
         const subStartDate = startDate ? new Date(startDate) : new Date();
-        const subExpiryDate = new Date(subStartDate.getTime() + (price === 0 ? 10 : 30) * 24 * 60 * 60 * 1000); // 10 days for Free, 30 days for Paid
+        const subExpiryDate = new Date(subStartDate.getTime() + (price === 0 ? 7 : 30) * 24 * 60 * 60 * 1000); // 7 days for Free/Custom, 30 days for Paid
 
         // Create organization, admin, plan, subscription, payment inside a transaction
         const registrationResult = await prisma.$transaction(async (tx) => {
@@ -129,12 +345,13 @@ router.post('/verify-and-register', async (req, res) => {
                     data: {
                         name: selectedPlan,
                         price: price,
-                        duration: price === 0 ? '10 Days' : 'Monthly',
-                        employeeLimit: price === 0 ? 5 : (selectedPlan.includes('Standard') ? 12 : 25),
-                        screenshotLimit: price === 0 ? 2 : (selectedPlan.includes('Standard') ? 10 : 25),
+                        duration: price === 0 ? '7 Days' : 'Monthly',
+                        employeeLimit: price === 0 ? (selectedPlan.includes('Free') ? 5 : 9999) : (selectedPlan.includes('Starter') ? 15 : selectedPlan.includes('Growth') ? 25 : selectedPlan.includes('Pro') ? 40 : 9999),
+                        screenshotLimit: price === 0 ? 5 : (selectedPlan.includes('Starter') ? 10 : selectedPlan.includes('Growth') ? 25 : selectedPlan.includes('Pro') ? 50 : 1000),
                         activityTracking: true,
                         productivityReports: true,
                         attendanceModule: true,
+                        videoRecording: selectedPlan.includes('Pro') || selectedPlan.includes('Custom'),
                         status: 'ACTIVE'
                     }
                 });
@@ -450,9 +667,10 @@ router.post('/verify-and-register', async (req, res) => {
 </body></html>`;
 
         // Fire-and-forget — registration already succeeded, don't block response
+        const ownerEmail = process.env.OWNER_EMAIL || 'info@kiaantechnology.com';
         Promise.all([
-            sendMail({ to: email,                        subject: userSubject,  html: userHtml  }),
-            sendMail({ to: 'lightlabcreation@gmail.com', subject: ownerSubject, html: ownerHtml })
+            sendMail({ to: email,      subject: userSubject,  html: userHtml  }),
+            sendMail({ to: ownerEmail, subject: ownerSubject, html: ownerHtml })
         ]).then(results => {
             console.log(`[Payment] Welcome email to user (${email}): ${results[0]?.sent ? '✓ sent via Brevo' : 'simulated/failed'}`);
             console.log(`[Payment] Admin alert to owner: ${results[1]?.sent ? '✓ sent via Brevo' : 'simulated/failed'}`);

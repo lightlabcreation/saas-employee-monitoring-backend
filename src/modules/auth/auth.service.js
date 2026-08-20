@@ -130,6 +130,22 @@ const login = async (email, password) => {
         user.activeAttendance = activeAttendance;
     }
 
+    let subscription = null;
+    if (user.role === 'ADMIN' && user.employee?.organizationId) {
+        const sub = await prisma.saasSubscription.findUnique({
+            where: { organizationId: user.employee.organizationId }
+        });
+        if (sub) {
+            const plan = await prisma.saasPlan.findUnique({
+                where: { id: sub.planId }
+            });
+            subscription = {
+                ...sub,
+                plan
+            };
+        }
+    }
+
     return {
         token,
         user: {
@@ -147,7 +163,15 @@ const login = async (email, password) => {
             allowRemoteAttendance: user.employee?.allowRemoteAttendance || false,
             allowRemoteLogin: user.employee?.allowRemoteLogin || false,
             deviceOwnership: user.employee?.deviceOwnership || 'PERSONAL_DEVICE',
-            status: user.employee?.status || 'OFFLINE'
+            status: user.employee?.status || 'OFFLINE',
+            subscription: subscription ? {
+                id: subscription.id,
+                planId: subscription.planId,
+                planName: subscription.plan?.name,
+                status: subscription.status,
+                startDate: subscription.startDate,
+                expiryDate: subscription.expiryDate
+            } : null
         },
     };
 };
@@ -211,6 +235,27 @@ const getMe = async (userId) => {
         user.fullName = user.name || user.email.split('@')[0];
         user.name = user.fullName;
         user.avatar = user.avatar || null;
+    }
+
+    // Add subscription info for admin
+    if (user.role === 'ADMIN' && user.employee?.organizationId) {
+        const subscription = await prisma.saasSubscription.findUnique({
+            where: { organizationId: user.employee.organizationId }
+        });
+        let plan = null;
+        if (subscription) {
+            plan = await prisma.saasPlan.findUnique({
+                where: { id: subscription.planId }
+            });
+        }
+        user.subscription = subscription ? {
+            id: subscription.id,
+            planId: subscription.planId,
+            planName: plan?.name,
+            status: subscription.status,
+            startDate: subscription.startDate,
+            expiryDate: subscription.expiryDate
+        } : null;
     }
 
     return user;

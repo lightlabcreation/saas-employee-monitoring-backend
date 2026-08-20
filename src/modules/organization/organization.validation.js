@@ -21,6 +21,10 @@ const organizationSchema = z.object({
     r2SecretAccessKey: z.string().nullable().optional(),
     r2BucketName: z.string().nullable().optional(),
     r2Endpoint: z.string().nullable().optional(),
+    smtpHost: z.string().nullable().optional(),
+    smtpPort: z.string().nullable().optional(),
+    smtpUser: z.string().nullable().optional(),
+    smtpFrom: z.string().nullable().optional(),
 });
 
 module.exports = {

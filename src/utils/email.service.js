@@ -14,7 +14,7 @@ function sendBrevoMail({ to, subject, html, text }) {
         }
 
         // Verified sender — as configured in Brevo dashboard
-        const senderEmail = process.env.MAIL_FROM_EMAIL || 'lightlabcreation@gmail.com';
+        const senderEmail = process.env.MAIL_FROM_EMAIL || 'info@kiaantechnology.com';
         const senderName  = process.env.MAIL_FROM_NAME || 'Kiaan Technology Pvt Ltd';
 
         const payload = JSON.stringify({

@@ -140,6 +140,10 @@ model Organization {
   r2SecretAccessKey      String?           @db.VarChar(255)
   r2BucketName           String?           @db.VarChar(255)
   r2Endpoint             String?           @db.VarChar(255)
+  smtpHost               String?           @db.VarChar(255)
+  smtpPort               String?           @db.VarChar(50)
+  smtpUser               String?           @db.VarChar(255)
+  smtpFrom               String?           @db.VarChar(255)
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
 
@@ -846,6 +850,7 @@ model SaasPlan {
   productivityReports Boolean  @default(true)
   attendanceModule    Boolean  @default(true)
   status              String   @default("ACTIVE") // "ACTIVE" | "INACTIVE"
+  videoRecording      Boolean  @default(false)
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 

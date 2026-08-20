@@ -3,7 +3,7 @@ const { successResponse, errorResponse } = require('../../utils/response');
 
 const createTicket = async (req, res) => {
   try {
-    const ticket = await ticketService.createTicket(req.user, req.body);
+    const ticket = await ticketService.createTicket(req.user, req.body, req.file);
     return successResponse(res, ticket, 'Ticket created successfully', 201);
   } catch (error) {
     console.error('Error creating ticket:', error);
@@ -33,7 +33,7 @@ const getTicketById = async (req, res) => {
 
 const replyTicket = async (req, res) => {
   try {
-    const ticket = await ticketService.replyToTicket(req.params.id, req.user, req.body);
+    const ticket = await ticketService.replyToTicket(req.params.id, req.user, req.body, req.file);
     return successResponse(res, ticket, 'Reply sent successfully');
   } catch (error) {
     console.error('Error replying to ticket:', error);

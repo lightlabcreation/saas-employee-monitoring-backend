@@ -1,5 +1,6 @@
 const prisma = require('../../config/db');
 const bcrypt = require('bcrypt');
+const { uploadImageBuffer } = require('../../utils/imageStorage');
 
 /**
  * Super Admin Services
@@ -161,15 +162,23 @@ const getAdmins = async () => {
 
     // Get Subscription Plan
     let planName = 'Free Trial';
+    let planId = null;
+    let subscriptionExpiryDate = null;
+    let subscriptionStatus = 'ACTIVE';
     if (orgId) {
       const sub = await prisma.saasSubscription.findUnique({
         where: { organizationId: orgId }
       });
       if (sub) {
+        subscriptionExpiryDate = sub.expiryDate ? sub.expiryDate.toISOString().split('T')[0] : null;
+        subscriptionStatus = sub.status;
         const plan = await prisma.saasPlan.findUnique({
           where: { id: sub.planId }
         });
-        if (plan) planName = plan.name;
+        if (plan) {
+          planName = plan.name;
+          planId = plan.id;
+        }
       }
     }
 
@@ -187,6 +196,9 @@ const getAdmins = async () => {
       mobile: profile?.mobile || 'N/A',
       employees: employeeCount,
       subscriptionPlan: planName,
+      planId: planId,
+      subscriptionExpiryDate: subscriptionExpiryDate,
+      subscriptionStatus: subscriptionStatus,
       status: user.employee?.status === 'DEACTIVATED' ? 'Suspended' : 'Active',
       createdAt: user.createdAt
     });
@@ -196,7 +208,7 @@ const getAdmins = async () => {
 };
 
 const createAdmin = async (adminData) => {
-  const { name, email, password, companyName, mobile, planId } = adminData;
+  const { name, email, password, companyName, mobile, planId, expiryDate, subscriptionStatus } = adminData;
 
   // Check if user already exists
   const existingUser = await prisma.user.findUnique({ where: { email } });
@@ -255,14 +267,16 @@ const createAdmin = async (adminData) => {
     }
 
     if (selectedPlan) {
-      const expiry = new Date();
-      expiry.setDate(expiry.getDate() + 30); // 30 days default
+      const expiry = expiryDate ? new Date(expiryDate) : new Date();
+      if (!expiryDate) {
+        expiry.setDate(expiry.getDate() + 30); // 30 days default
+      }
 
       await tx.saasSubscription.create({
         data: {
           organizationId: organization.id,
           planId: selectedPlan,
-          status: 'ACTIVE',
+          status: subscriptionStatus || 'ACTIVE',
           startDate: new Date(),
           expiryDate: expiry
         }
@@ -279,7 +293,7 @@ const createAdmin = async (adminData) => {
 };
 
 const updateAdmin = async (adminId, adminData) => {
-  const { name, email, companyName, mobile } = adminData;
+  const { name, email, companyName, mobile, planId, expiryDate, subscriptionStatus } = adminData;
 
   const user = await prisma.user.findUnique({
     where: { id: adminId },
@@ -308,6 +322,42 @@ const updateAdmin = async (adminId, adminData) => {
           where: { id: user.employee.organizationId },
           data: { legalName: companyName }
         });
+      }
+
+      // 3.5 Update SaaS Subscription Plan
+      if (user.employee?.organizationId && planId) {
+        const existingSub = await tx.saasSubscription.findUnique({
+          where: { organizationId: user.employee.organizationId }
+        });
+
+        const subData = {
+          planId,
+          status: subscriptionStatus || 'ACTIVE'
+        };
+        if (expiryDate) {
+          subData.expiryDate = new Date(expiryDate);
+        }
+
+        if (existingSub) {
+          await tx.saasSubscription.update({
+            where: { organizationId: user.employee.organizationId },
+            data: subData
+          });
+        } else {
+          const expiry = expiryDate ? new Date(expiryDate) : new Date();
+          if (!expiryDate) {
+            expiry.setDate(expiry.getDate() + 30);
+          }
+          await tx.saasSubscription.create({
+            data: {
+              organizationId: user.employee.organizationId,
+              planId,
+              status: subData.status,
+              startDate: new Date(),
+              expiryDate: expiry
+            }
+          });
+        }
       }
     }
 
@@ -462,18 +512,34 @@ const getTicketById = async (id) => {
   return ticket;
 };
 
-const replyToTicket = async (id, replyData) => {
+const replyToTicket = async (id, replyData, file) => {
   const { sender, name, text } = replyData;
   const ticket = await prisma.supportTicket.findUnique({
     where: { id }
   });
   if (!ticket) throw new Error('Ticket not found');
 
+  let imageUrl = null;
+  if (file) {
+    try {
+      const uploadResult = await uploadImageBuffer(file.buffer, {
+        format: 'webp',
+        quality: 80,
+        folder: 'insightful/tickets',
+        fileNamePrefix: 'reply'
+      });
+      imageUrl = uploadResult.imageUrl;
+    } catch (err) {
+      console.error('Error uploading reply image:', err.message);
+    }
+  }
+
   const messages = Array.isArray(ticket.messages) ? ticket.messages : [];
   const newMessage = {
     sender: sender || 'superadmin',
     name: name || 'Superadmin',
     text,
+    imageUrl: imageUrl || null,
     timestamp: new Date().toISOString()
   };
 
@@ -544,6 +610,83 @@ const deleteMessage = async (id, messageIndex) => {
   });
 };
 
+const deleteAdmin = async (userId) => {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    include: { employee: true }
+  });
+  if (!user) throw new Error('Admin not found');
+
+  const orgId = user.employee?.organizationId;
+
+  await prisma.$transaction(async (tx) => {
+    // 1. If organization exists, delete all its child records first
+    if (orgId) {
+      await tx.saasSubscription.deleteMany({ where: { organizationId: orgId } });
+      await tx.invoice.deleteMany({ where: { organizationId: orgId } });
+      await tx.activityLog.deleteMany({ where: { organizationId: orgId } });
+      await tx.screenshot.deleteMany({ where: { organizationId: orgId } });
+      await tx.appUsageLog.deleteMany({ where: { organizationId: orgId } });
+      await tx.attendance.deleteMany({ where: { organizationId: orgId } });
+      await tx.manualTime.deleteMany({ where: { organizationId: orgId } });
+      await tx.shift.deleteMany({ where: { organizationId: orgId } });
+      await tx.timeOff.deleteMany({ where: { organizationId: orgId } });
+      await tx.complianceSetting.deleteMany({ where: { organizationId: orgId } });
+      await tx.reportSetting.deleteMany({ where: { organizationId: orgId } });
+      await tx.location.deleteMany({ where: { organizationId: orgId } });
+      await tx.workZone.deleteMany({ where: { organizationId: orgId } });
+      await tx.locationLog.deleteMany({ where: { organizationId: orgId } });
+      await tx.liveActivity.deleteMany({ where: { organizationId: orgId } });
+      await tx.auditLog.deleteMany({ where: { organizationId: orgId } });
+      await tx.alertRule.deleteMany({ where: { organizationId: orgId } });
+      await tx.alertSettings.deleteMany({ where: { organizationId: orgId } });
+      await tx.emailReport.deleteMany({ where: { organizationId: orgId } });
+      await tx.integration.deleteMany({ where: { organizationId: orgId } });
+      await tx.productivityTag.deleteMany({ where: { organizationId: orgId } });
+      await tx.productivityRule.deleteMany({ where: { organizationId: orgId } });
+      await tx.trackingSetting.deleteMany({ where: { organizationId: orgId } });
+      await tx.advancedTrackingSetting.deleteMany({ where: { organizationId: orgId } });
+      await tx.goal.deleteMany({ where: { organizationId: orgId } });
+      await tx.invitation.deleteMany({ where: { organizationId: orgId } });
+      await tx.screenshotSetting.deleteMany({ where: { organizationId: orgId } });
+      await tx.videoRecording.deleteMany({ where: { organizationId: orgId } });
+      await tx.projectAssignment.deleteMany({ where: { employee: { organizationId: orgId } } });
+      await tx.projectTimeLog.deleteMany({ where: { employee: { organizationId: orgId } } });
+      await tx.task.deleteMany({ where: { organizationId: orgId } });
+      await tx.project.deleteMany({ where: { organizationId: orgId } });
+      await tx.team.deleteMany({ where: { organizationId: orgId } });
+    }
+
+    // 2. Delete Admin Profile and User record
+    await tx.adminProfile.deleteMany({
+      where: { userId }
+    });
+
+    await tx.user.delete({
+      where: { id: userId }
+    });
+
+    // 3. Delete all employees of the organization (including the admin employee)
+    if (orgId) {
+      await tx.employee.deleteMany({
+        where: { organizationId: orgId }
+      });
+
+      // 4. Delete the Organization itself
+      await tx.organization.delete({
+        where: { id: orgId }
+      });
+    } else if (user.employeeId) {
+      // If there is no orgId but user is linked to an employee record
+      await tx.employee.delete({
+        where: { id: user.employeeId }
+      });
+    }
+  });
+
+  return true;
+};
+
 module.exports = {
   getDashboardSummary,
   getUpcomingRenewals,
@@ -551,6 +694,7 @@ module.exports = {
   createAdmin,
   updateAdmin,
   toggleAdminStatus,
+  deleteAdmin,
   getPlans,
   createPlan,
   updatePlan,

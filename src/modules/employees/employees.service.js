@@ -60,6 +60,29 @@ const getEmployeeById = async (id) => {
  * Invite a new employee (creates employee record with INVITED status)
  */
 const inviteEmployee = async (data) => {
+    // ── Check Organization Subscription & Employee Limit ───────────────────
+    if (data.organizationId) {
+        const activeSub = await prisma.saasSubscription.findFirst({
+            where: { organizationId: data.organizationId, status: 'ACTIVE' }
+        });
+        if (activeSub) {
+            const plan = await prisma.saasPlan.findUnique({ where: { id: activeSub.planId } });
+            if (plan && plan.employeeLimit) {
+                const currentCount = await prisma.employee.count({
+                    where: {
+                        organizationId: data.organizationId,
+                        status: { not: 'DEACTIVATED' }
+                    }
+                });
+                if (currentCount >= plan.employeeLimit) {
+                    const err = new Error(`Employee creation limit reached for your active plan (${plan.name}). Maximum allowed: ${plan.employeeLimit}. Please upgrade your subscription plan.`);
+                    err.statusCode = 400;
+                    throw err;
+                }
+            }
+        }
+    }
+
     // Find the default tracking setting for this computer type in the organization
     let trackingSetting = await prisma.trackingSetting.findFirst({
         where: {
