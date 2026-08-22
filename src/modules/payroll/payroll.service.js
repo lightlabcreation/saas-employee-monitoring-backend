@@ -60,15 +60,15 @@ const getPayrollSummary = async (organizationId, params = {}) => {
         // Manual time hours
         const manualSeconds = (emp.manualTimeEntries || []).reduce((acc, m) => acc + (m.duration || 0), 0);
         const empHours = (attSeconds + manualSeconds) / 3600;
-        const rate = typeof emp.hourlyRate === 'number' && emp.hourlyRate > 0 ? emp.hourlyRate : 25;
+        const rate = typeof emp.hourlyRate === 'number' && emp.hourlyRate > 0 ? emp.hourlyRate : 0;
 
         totalHours += empHours;
         totalGross += empHours * rate;
     });
 
     const avgRate = employees.length > 0
-        ? employees.reduce((acc, e) => acc + (typeof e.hourlyRate === 'number' && e.hourlyRate > 0 ? e.hourlyRate : 25), 0) / employees.length
-        : 25;
+        ? employees.reduce((acc, e) => acc + (typeof e.hourlyRate === 'number' && e.hourlyRate > 0 ? e.hourlyRate : 0), 0) / employees.length
+        : 0;
 
     return {
         totalPayroll: Math.round(totalGross * 100) / 100,
@@ -146,8 +146,13 @@ const getPayrollRecords = async (organizationId, startDate, endDate, params = {}
         const overtimeSeconds = Math.max(0, attSeconds - regularSeconds);
         const overtimeHours = Math.round((overtimeSeconds / 3600) * 100) / 100;
 
+        const payType = emp.payType || (emp.monthlyRate > 0 ? 'MONTHLY' : 'HOURLY');
         const rate = typeof emp.hourlyRate === 'number' && emp.hourlyRate > 0 ? emp.hourlyRate : 25;
-        const grossPay = Math.round(totalHours * rate * 100) / 100;
+        const mRate = typeof emp.monthlyRate === 'number' && emp.monthlyRate > 0 ? emp.monthlyRate : Math.round(rate * 160);
+        
+        const grossPay = payType === 'MONTHLY' 
+            ? mRate 
+            : Math.round(totalHours * rate * 100) / 100;
         const deductions = 0;
         const netPay = grossPay;
 
@@ -167,11 +172,13 @@ const getPayrollRecords = async (organizationId, startDate, endDate, params = {}
             period: periodLabel,
             totalHours,
             overTime: overtimeHours,
+            payType,
             hourlyRate: rate,
+            monthlyRate: mRate,
             grossPay,
             deductions,
             netPay,
-            status: totalHours > 0 ? 'Ready' : 'Pending',
+            status: (totalHours > 0 || payType === 'MONTHLY') ? 'Ready' : 'Pending',
         };
     });
 };

@@ -128,6 +128,13 @@ const createInvitation = async ({ fullName, email, teamId, location, organizatio
 
     const mailResult = await sendMail({ to: email, subject, html, text });
 
+    const agentDownloadUrl = `${process.env.API_PUBLIC_URL || 'http://localhost:5000'}/agent/EMS-Tracker-latest.exe`;
+    console.log("=================================================================");
+    console.log(`🚀 INVITATION CREATED FOR: ${fullName} (${email})`);
+    console.log(`📥 AGENT DOWNLOAD LINK: ${agentDownloadUrl}`);
+    console.log(`🔗 ACTIVATION URL: ${activationUrl}`);
+    console.log("=================================================================");
+
     return {
         success: true,
         invitation,

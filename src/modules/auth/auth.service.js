@@ -58,7 +58,7 @@ const register = async (userData) => {
 const login = async (email, password) => {
     const user = await prisma.user.findUnique({
         where: { email },
-        include: { employee: true },
+        include: { employee: { include: { organization: true } } },
     });
 
     if (!user) {
@@ -154,7 +154,9 @@ const login = async (email, password) => {
             role: user.role,
             fullName: user.name || user.employee?.fullName || user.email.split('@')[0],
             name: user.name || user.employee?.fullName || user.email.split('@')[0], 
-            avatar: user.avatar || user.employee?.avatar || null,
+            avatar: user.avatar || user.employee?.avatar || user.employee?.organization?.logo || null,
+            organizationLogo: user.employee?.organization?.logo || user.avatar || user.employee?.avatar || null,
+            organizationName: user.employee?.organization?.legalName || 'Organization Admin',
             employeeId: user.employeeId,
             organizationId: user.employee?.organizationId,
             teamId: user.employee?.teamId,

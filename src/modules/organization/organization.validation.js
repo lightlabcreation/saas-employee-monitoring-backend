@@ -25,6 +25,9 @@ const organizationSchema = z.object({
     smtpPort: z.string().nullable().optional(),
     smtpUser: z.string().nullable().optional(),
     smtpFrom: z.string().nullable().optional(),
+    cloudinaryCloudName: z.string().nullable().optional(),
+    cloudinaryApiKey: z.string().nullable().optional(),
+    cloudinaryApiSecret: z.string().nullable().optional(),
 });
 
 module.exports = {

@@ -4,23 +4,58 @@ const crypto = require('crypto');
 const sharp = require('sharp');
 const { v2: cloudinary } = require('cloudinary');
 
+const prisma = require('../config/db');
+
 const ROOT_PUBLIC_DIR = path.join(__dirname, '../../public');
 const SCREENSHOT_UPLOAD_DIR = path.join(ROOT_PUBLIC_DIR, 'uploads/screenshots');
 
-function isCloudinaryConfigured() {
-    return Boolean(
-        process.env.CLOUDINARY_CLOUD_NAME &&
-        process.env.CLOUDINARY_API_KEY &&
-        process.env.CLOUDINARY_API_SECRET
-    );
+async function resolveCloudinaryConfig(organizationId) {
+    if (organizationId) {
+        try {
+            const org = await prisma.organization.findUnique({
+                where: { id: organizationId },
+                select: { cloudinaryCloudName: true, cloudinaryApiKey: true, cloudinaryApiSecret: true }
+            });
+            if (org && org.cloudinaryCloudName && org.cloudinaryApiKey && org.cloudinaryApiSecret) {
+                return {
+                    cloud_name: org.cloudinaryCloudName,
+                    api_key: org.cloudinaryApiKey,
+                    api_secret: org.cloudinaryApiSecret
+                };
+            }
+        } catch (err) {
+            console.warn('[imageStorage] Error fetching org cloudinary credentials:', err.message);
+        }
+    }
+
+    if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
+        return {
+            cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+            api_key: process.env.CLOUDINARY_API_KEY,
+            api_secret: process.env.CLOUDINARY_API_SECRET
+        };
+    }
+
+    return null;
 }
 
-function configureCloudinary() {
-    cloudinary.config({
-        cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-        api_key: process.env.CLOUDINARY_API_KEY,
-        api_secret: process.env.CLOUDINARY_API_SECRET
-    });
+function isCloudinaryConfigured(organizationId) {
+    if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
+        return true;
+    }
+    return false;
+}
+
+function configureCloudinary(customConfig) {
+    if (customConfig) {
+        cloudinary.config(customConfig);
+    } else {
+        cloudinary.config({
+            cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+            api_key: process.env.CLOUDINARY_API_KEY,
+            api_secret: process.env.CLOUDINARY_API_SECRET
+        });
+    }
 }
 
 function ensureLocalUploadDir() {
@@ -63,29 +98,33 @@ async function uploadImageBuffer(buffer, options = {}) {
         folder = 'insightful/screenshots',
         fileNamePrefix = 'screenshot',
         useCloudinary = true,
-        blur = false
+        blur = false,
+        organizationId = null
     } = options;
 
     const processedBuffer = await processImageBuffer(buffer, { format, quality, blur });
 
-    if (useCloudinary && isCloudinaryConfigured()) {
-        configureCloudinary();
-        const publicId = `${fileNamePrefix}_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+    if (useCloudinary) {
+        const cloudConfig = await resolveCloudinaryConfig(organizationId);
+        if (cloudConfig) {
+            configureCloudinary(cloudConfig);
+            const publicId = `${fileNamePrefix}_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
 
-        const result = await cloudinary.uploader.upload(
-            `data:image/${format};base64,${processedBuffer.toString('base64')}`,
-            {
-                folder,
-                public_id: publicId,
-                resource_type: 'image'
-            }
-        );
+            const result = await cloudinary.uploader.upload(
+                `data:image/${format};base64,${processedBuffer.toString('base64')}`,
+                {
+                    folder,
+                    public_id: publicId,
+                    resource_type: 'image'
+                }
+            );
 
-        return {
-            imageUrl: result.secure_url,
-            publicId: result.public_id,
-            storage: 'cloudinary'
-        };
+            return {
+                imageUrl: result.secure_url,
+                publicId: result.public_id,
+                storage: 'cloudinary'
+            };
+        }
     }
 
     ensureLocalUploadDir();
@@ -101,7 +140,7 @@ async function uploadImageBuffer(buffer, options = {}) {
     };
 }
 
-async function deleteImageByUrl(imageUrl) {
+async function deleteImageByUrl(imageUrl, organizationId = null) {
     if (!imageUrl) return;
 
     if (imageUrl.startsWith('/uploads/')) {
@@ -113,14 +152,18 @@ async function deleteImageByUrl(imageUrl) {
     }
 
     const publicId = getCloudinaryPublicIdFromUrl(imageUrl);
-    if (publicId && isCloudinaryConfigured()) {
-        configureCloudinary();
-        await cloudinary.uploader.destroy(publicId, { resource_type: 'image' });
+    if (publicId) {
+        const cloudConfig = await resolveCloudinaryConfig(organizationId);
+        if (cloudConfig) {
+            configureCloudinary(cloudConfig);
+            await cloudinary.uploader.destroy(publicId, { resource_type: 'image' });
+        }
     }
 }
 
 module.exports = {
     uploadImageBuffer,
     deleteImageByUrl,
-    isCloudinaryConfigured
+    isCloudinaryConfigured,
+    resolveCloudinaryConfig
 };

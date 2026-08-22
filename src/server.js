@@ -8,7 +8,7 @@ const { initSocketServer } = require('./socket/server');
 const cleanupService = require('./modules/screenshots/cleanup.service');
 const { processAllStaleSessions } = require('./utils/attendanceSession');
 
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
     logger.info(`Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
     
     // Start Cleanup Service

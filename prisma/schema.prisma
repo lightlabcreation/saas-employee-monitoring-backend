@@ -144,6 +144,9 @@ model Organization {
   smtpPort               String?           @db.VarChar(50)
   smtpUser               String?           @db.VarChar(255)
   smtpFrom               String?           @db.VarChar(255)
+  cloudinaryCloudName    String?           @db.VarChar(255)
+  cloudinaryApiKey       String?           @db.VarChar(255)
+  cloudinaryApiSecret    String?           @db.VarChar(255)
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
 
@@ -190,7 +193,9 @@ model Employee {
   computerType   ComputerType   @default(COMPANY)
   deviceOwnership String        @default("PERSONAL_DEVICE") // "PERSONAL_DEVICE" | "COMPANY_DEVICE"
   status         EmployeeStatus @default(ACTIVE)
+  payType        String         @default("HOURLY") // "HOURLY" | "MONTHLY"
   hourlyRate     Float          @default(0.0)
+  monthlyRate    Float          @default(0.0)
   avatar         String?        @db.LongText
   allowRemoteLogin Boolean      @default(false)
   allowRemoteAttendance Boolean @default(false)

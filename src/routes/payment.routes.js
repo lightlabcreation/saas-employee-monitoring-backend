@@ -97,7 +97,7 @@ router.get('/my-subscription', authMiddleware, async (req, res) => {
             return errorResponse(res, 'Organization not found for current user', 404);
         }
 
-        const subscription = await prisma.saasSubscription.findUnique({
+        let subscription = await prisma.saasSubscription.findUnique({
             where: { organizationId }
         });
 
@@ -106,6 +106,23 @@ router.get('/my-subscription', authMiddleware, async (req, res) => {
             plan = await prisma.saasPlan.findUnique({
                 where: { id: subscription.planId }
             });
+        }
+
+        // Fix: Auto-correct subscription expiry if Starter/Growth/Pro monthly plan has 7-day trial expiry
+        if (subscription && plan) {
+            const isMonthlyPlan = ['starter', 'growth', 'pro'].some(pName => plan.name?.toLowerCase()?.includes(pName)) || plan.duration?.toLowerCase() === 'monthly';
+            const diffDays = Math.round((new Date(subscription.expiryDate).getTime() - new Date(subscription.startDate).getTime()) / (1000 * 3600 * 24));
+
+            if (isMonthlyPlan && diffDays < 20) {
+                const correctExpiry = new Date(new Date(subscription.startDate).getTime() + 30 * 24 * 60 * 60 * 1000);
+                subscription.expiryDate = correctExpiry;
+
+                // Update in DB asynchronously
+                await prisma.saasSubscription.update({
+                    where: { id: subscription.id },
+                    data: { expiryDate: correctExpiry }
+                }).catch(e => console.error('Error auto-correcting subscription expiry:', e));
+            }
         }
 
         const payments = await prisma.saasPayment.findMany({
@@ -225,12 +242,11 @@ router.post('/verify-upgrade', authMiddleware, async (req, res) => {
 
         // Find plan from DB
         let dbPlan = await prisma.saasPlan.findFirst({
-            where: { name: { equals: planName, mode: 'insensitive' } }
+            where: { name: planName }
         });
         if (!dbPlan) {
-            dbPlan = await prisma.saasPlan.findFirst({
-                where: { status: 'ACTIVE' }
-            });
+            const allDbPlans = await prisma.saasPlan.findMany({ where: { status: 'ACTIVE' } });
+            dbPlan = allDbPlans.find(p => p.name.toLowerCase() === planName.toLowerCase()) || allDbPlans[0];
         }
 
         const startDate = new Date();
@@ -330,8 +346,10 @@ router.post('/verify-and-register', async (req, res) => {
         const hashedPassword = await bcrypt.hash(password, 10);
 
         // Setup dates
+        const isFreeTrial = (selectedPlan || '').toLowerCase().includes('trial') || (selectedPlan || '').toLowerCase().includes('7');
+        const durationDays = isFreeTrial ? 7 : 30;
         const subStartDate = startDate ? new Date(startDate) : new Date();
-        const subExpiryDate = new Date(subStartDate.getTime() + (price === 0 ? 7 : 30) * 24 * 60 * 60 * 1000); // 7 days for Free/Custom, 30 days for Paid
+        const subExpiryDate = new Date(subStartDate.getTime() + durationDays * 24 * 60 * 60 * 1000);
 
         // Create organization, admin, plan, subscription, payment inside a transaction
         const registrationResult = await prisma.$transaction(async (tx) => {
@@ -345,9 +363,9 @@ router.post('/verify-and-register', async (req, res) => {
                     data: {
                         name: selectedPlan,
                         price: price,
-                        duration: price === 0 ? '7 Days' : 'Monthly',
-                        employeeLimit: price === 0 ? (selectedPlan.includes('Free') ? 5 : 9999) : (selectedPlan.includes('Starter') ? 15 : selectedPlan.includes('Growth') ? 25 : selectedPlan.includes('Pro') ? 40 : 9999),
-                        screenshotLimit: price === 0 ? 5 : (selectedPlan.includes('Starter') ? 10 : selectedPlan.includes('Growth') ? 25 : selectedPlan.includes('Pro') ? 50 : 1000),
+                        duration: isFreeTrial ? '7 Days' : 'Monthly',
+                        employeeLimit: isFreeTrial ? 5 : (selectedPlan.includes('Starter') ? 15 : selectedPlan.includes('Growth') ? 25 : selectedPlan.includes('Pro') ? 40 : 9999),
+                        screenshotLimit: isFreeTrial ? 5 : (selectedPlan.includes('Starter') ? 10 : selectedPlan.includes('Growth') ? 25 : selectedPlan.includes('Pro') ? 50 : 1000),
                         activityTracking: true,
                         productivityReports: true,
                         attendanceModule: true,

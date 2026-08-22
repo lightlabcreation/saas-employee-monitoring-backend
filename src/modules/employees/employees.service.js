@@ -135,7 +135,17 @@ const updateEmployee = async (id, data) => {
     }
     if (employeeData.location !== undefined) updateData.location = employeeData.location;
     if (employeeData.status !== undefined) updateData.status = employeeData.status;
+    if (employeeData.payType !== undefined) updateData.payType = employeeData.payType;
     if (employeeData.hourlyRate !== undefined) updateData.hourlyRate = employeeData.hourlyRate;
+    if (employeeData.monthlyRate !== undefined) updateData.monthlyRate = employeeData.monthlyRate;
+
+    // Auto sync hourly/monthly if payType is explicitly updated
+    if (employeeData.payType === 'MONTHLY' && employeeData.monthlyRate > 0) {
+        updateData.hourlyRate = Math.round((employeeData.monthlyRate / 160) * 100) / 100;
+    } else if (employeeData.payType === 'HOURLY' && employeeData.hourlyRate > 0) {
+        updateData.monthlyRate = Math.round(employeeData.hourlyRate * 160 * 100) / 100;
+    }
+
     if (employeeData.avatar !== undefined) updateData.avatar = employeeData.avatar;
     if (employeeData.allowRemoteAttendance !== undefined) updateData.allowRemoteAttendance = employeeData.allowRemoteAttendance;
     if (employeeData.allowRemoteLogin !== undefined) updateData.allowRemoteLogin = employeeData.allowRemoteLogin;

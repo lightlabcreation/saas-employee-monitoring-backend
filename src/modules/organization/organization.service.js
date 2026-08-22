@@ -30,8 +30,9 @@ class OrganizationService {
             });
         }
 
-        if (org && org.r2SecretAccessKey) {
-            org.r2SecretAccessKey = "********";
+        if (org) {
+            if (org.r2SecretAccessKey) org.r2SecretAccessKey = "********";
+            if (org.cloudinaryApiSecret) org.cloudinaryApiSecret = "********";
         }
 
         return org;
@@ -39,12 +40,13 @@ class OrganizationService {
 
     async updateOrganization(id, data) {
         // If secret key is masked, preserve the original one from database
-        if (data.r2SecretAccessKey === "********") {
+        if (data.r2SecretAccessKey === "********" || data.cloudinaryApiSecret === "********") {
             const existing = await prisma.organization.findUnique({
                 where: { id },
-                select: { r2SecretAccessKey: true }
+                select: { r2SecretAccessKey: true, cloudinaryApiSecret: true }
             });
-            data.r2SecretAccessKey = existing?.r2SecretAccessKey;
+            if (data.r2SecretAccessKey === "********") data.r2SecretAccessKey = existing?.r2SecretAccessKey;
+            if (data.cloudinaryApiSecret === "********") data.cloudinaryApiSecret = existing?.cloudinaryApiSecret;
         }
 
         // Convert workDays array to string for Prisma
@@ -83,8 +85,9 @@ class OrganizationService {
             data: updateData
         });
 
-        if (org && org.r2SecretAccessKey) {
-            org.r2SecretAccessKey = "********";
+        if (org) {
+            if (org.r2SecretAccessKey) org.r2SecretAccessKey = "********";
+            if (org.cloudinaryApiSecret) org.cloudinaryApiSecret = "********";
         }
 
         return org;
@@ -98,8 +101,9 @@ class OrganizationService {
             }
         });
 
-        if (org && org.r2SecretAccessKey) {
-            org.r2SecretAccessKey = "********";
+        if (org) {
+            if (org.r2SecretAccessKey) org.r2SecretAccessKey = "********";
+            if (org.cloudinaryApiSecret) org.cloudinaryApiSecret = "********";
         }
 
         return org;
